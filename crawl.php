@@ -223,13 +223,13 @@ Loop::addPeriodicTimer( 10.0, function( $timer ) use ( $que ) {
 	echo "\e[0m\n";
 } );
 
-Loop::addSignal( SIGINT, function( int $signal ) use( $filler_timer ) {
+Loop::addSignal( SIGINT, function( int $signal ) use( $filler_timer, $que ) {
 	if ( defined( '___KILLIT' ) ) {
 		print_stats();
 		exit( "\nCaught angry user interrupt signal.. killing..\n\n" );
 	}
 
-	echo "\nCaught user interrupt signal.. gracefully shutting down..\n";
+	echo "\nCaught user interrupt signal.. gracefully shutting down.. " . $que->count() . " items still to process.. \n";
 	Loop::cancelTimer( $filler_timer );
 
 	define( '___KILLIT', true );
