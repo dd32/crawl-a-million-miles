@@ -1,0 +1,7 @@
+{
+    "require": {
+        "react/http": "^1.6",
+        "clue/mq-react": "^1.4",
+        "react/promise-timer": "^1.8"
+    }
+}
