@@ -6,6 +6,5 @@ This code is not in a working state.
 
 TODO:
  - Site categorization and platform detection.
- - Error handling, ReactPHP HTTP Client isn't throwing an error (or success!) for DNS resolution failures.
  - Present stats on the crawl afterwards
  - Allow comparing stats to last run

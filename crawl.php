@@ -1,11 +1,12 @@
 <?php
 
 namespace dd32\CrawlaMillion;
-
+use Exception;
 use Clue\React\Mq\Queue;
 use React\Promise\Timer;
 use React\EventLoop\Loop;
-// use React\Http\Browser;
+use React\Http\Browser;
+use React\Socket\Connector;
 
 const FILE = './top-1m.csv';
 
@@ -38,22 +39,52 @@ function gen_domains() {
 	return false;
 }
 
-$domains = gen_domains();
-$domains->rewind();
 
-$browser = new Browser();
+/**
+ * The callback for when we have the HMTL content of a domain.
+ */
+function callback_success( $domain, $response ) {
+	echo "$domain returned HTTP " . $response->getStatusCode() . ' and ' . strlen( $response->getBody() ) . " bytes \n";
+}
 
-// A Handler to process each domain.
-$domain_handler_timeout = function( $domain ) use( $browser ) {
-	return Timer\timeout( $browser->get( "https://{$domain}/" ), TIMEOUT );
-};
+/**
+ * The callback for when we timeout on a domain.
+ */
+function callback_failure( $domain, $exception ) {
+	echo "$domain threw an error: " . $exception->getMessage() . "\n";
+}
+
+$browser = new Browser(
+	new Connector(
+		[
+			'timeout' => TIMEOUT
+		]
+	)
+);
+
+// Timeout after..
+$browser->withTimeout( TIMEOUT );
+
+// We will handle 4xx and 5xx errors.
+$browser->withRejectErrorResponse( false );
 
 // Create a queue, and have it process these domains.
-$que = new Queue( CONCURRENCY, QUEUE_SIZE, $domain_handler_timeout );
+$que = new Queue(
+	CONCURRENCY,
+	QUEUE_SIZE,
+	function( $domain ) use( $browser ) {
+		return $browser->get( "http://{$domain}/" );
+	}
+);
 
 // Fill the Queue up every now and then.
-$timer = null; // So it's availble to the function..
-$timer = Loop::addPeriodicTimer( 2.0, function () use( &$timer, $que, $domains ) {
+$timer = Loop::addPeriodicTimer( 1.0, function () use( &$timer, $que ) {
+	// Setup the domains..
+	static $domains = false;
+	if ( ! $domains ) {
+		$domains = gen_domains();
+	}
+
 	echo "Queue Size: " . $que->count() . "\n";
 
 	while ( $que->count() < QUEUE_SIZE ) {
@@ -69,10 +100,10 @@ $timer = Loop::addPeriodicTimer( 2.0, function () use( &$timer, $que, $domains )
 
 		$que( $domain )->then(
 			function( $response ) use( $domain ) {
-				echo "$domain returned " . strlen( $response->getBody() ) . " bytes \n";
+				return callback_success( $domain, $response );
 			},
-			function ( Exception $error ) use( $domain ) {
-				echo "$domain threw an error: " . $error->getMessage() . "\n";
+			function ( $exception ) use( $domain ) {
+				return callback_failure( $domain, $exception );
 			}
 		);
 	}
