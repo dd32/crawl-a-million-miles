@@ -14,6 +14,7 @@ const CONCURRENCY = 5;
 const QUEUE_SIZE  = CONCURRENCY * 10;
 const TIMEOUT     = 5.0;
 const MAX_DOMAINS = 100; // Maximum number to process, set to 0 for all.
+const USER_AGENT  = 'dd32-CrawlaMillion/1.0; https://github.com/dd32/crawl-a-million-miles';
 
 require __DIR__ . '/vendor/autoload.php';
 
@@ -57,7 +58,11 @@ function callback_failure( $domain, $exception ) {
 $browser = new Browser(
 	new Connector(
 		[
-			'timeout' => TIMEOUT
+			'timeout' => TIMEOUT,
+			'tls'     => [
+				'verify_peer'      => false,
+				'verify_peer_name' => false
+			]
 		]
 	)
 );
@@ -73,7 +78,12 @@ $que = new Queue(
 	CONCURRENCY,
 	QUEUE_SIZE,
 	function( $domain ) use( $browser ) {
-		return $browser->get( "http://{$domain}/" );
+		return $browser->get(
+			"http://{$domain}/",
+			[
+				'User-Agent' => USER_AGENT
+			]
+		);
 	}
 );
 
