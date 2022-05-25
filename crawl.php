@@ -11,7 +11,7 @@ use React\Socket\Connector;
 const FILE = './top-1m.csv';
 
 const CONCURRENCY = 5;
-const QUEUE_SIZE  = CONCURRENCY * 10;
+const QUEUE_SIZE  = CONCURRENCY * 2;
 const TIMEOUT     = 5.0;
 const MAX_DOMAINS = 100; // Maximum number to process, set to 0 for all.
 const USER_AGENT  = 'dd32-CrawlaMillion/1.0; https://github.com/dd32/crawl-a-million-miles';
@@ -47,6 +47,25 @@ function stat( $stat, $sub = null ) {
 
 		$stats[ $stat ][ $sub ]++;
 	}
+}
+
+function print_stats() {
+	global $stats;
+
+	echo "\n";
+
+	printf(
+		"Processed %d sites, success rate of %s\n",
+		$stats['success'] + $stats['error'],
+		round( ( $stats['success'] / ( $stats['success'] + $stats['error'] ) ) * 100, 1 ) . '%'
+	);
+	printf(
+		"WordPress was seen on %s of successful sites.\n",
+		round( ( $stats['wp']['yes'] + $stats['wp']['maybe'] ) / $stats['success'] * 100, 2 ) . '%'
+	);
+
+	echo "\n";
+
 }
 
 require __DIR__ . '/vendor/autoload.php';
@@ -161,7 +180,7 @@ $que = new Queue(
 );
 
 // Fill the Queue up every now and then.
-Loop::addPeriodicTimer( 1.0, function( $timer ) use( $que ) {
+$filler_timer = Loop::addPeriodicTimer( 1.0, function( $timer ) use( $que ) {
 	// Setup the domains..
 	static $domains = false;
 	if ( ! $domains ) {
@@ -192,21 +211,30 @@ Loop::addPeriodicTimer( 1.0, function( $timer ) use( $que ) {
 	}
 } );
 
-Loop::addSignal( SIGINT, function( int $signal ) {
-    echo "\nCaught user interrupt signal\n";
-	Loop::stop();
+// Print out the status occasionally..
+Loop::addPeriodicTimer( 10.0, function( $timer ) use ( $que ) {
+	if ( ! $que->count() ) {
+		Loop::cancelTimer( $timer );
+	}
+
+	// Red for visibility.
+	echo "\e[0;31m";
+	print_stats();
+	echo "\e[0m\n";
+} );
+
+Loop::addSignal( SIGINT, function( int $signal ) use( $filler_timer ) {
+	if ( defined( '___KILLIT' ) ) {
+		print_stats();
+		exit( "\nCaught angry user interrupt signal.. killing..\n\n" );
+	}
+
+	echo "\nCaught user interrupt signal.. gracefully shutting down..\n";
+	Loop::cancelTimer( $filler_timer );
+
+	define( '___KILLIT', true );
 } );
 
 Loop::run();
 
 print_r( $stats );
-
-printf(
-	"Processed %d sites, success rate of %s\n",
-	$stats['success'] + $stats['error'],
-	round( ( $stats['success'] / ( $stats['success'] + $stats['error'] ) ) * 100, 1 ) . '%'
-);
-printf(
-	"WordPress was seen on %s of successful sites.\n",
-	round( ( $stats['wp']['yes'] + $stats['wp']['maybe'] ) / $stats['success'] * 100, 2 ) . '%'
-);
