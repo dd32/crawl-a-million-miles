@@ -107,10 +107,11 @@ function callback_success( $domain, $response ) {
 	$link_headers = implode( ' ', $headers['Link'] ?? [] );
 
 	if (
-		str_contains( $link_headers, 'https://api.w.org/' ) ||
+		str_contains( $link_headers, '.w.org' ) ||
 		str_contains( $link_headers, '/wp-json' ) ||
 		str_contains( $link_headers, '?rest_route=' ) ||
 		str_contains( $body, '/wp-' ) ||
+		str_contains( $body, '.w.org' ) ||
 		str_contains( $body, 'WordPress/' ) ||
 		str_contains( $body, '/xmlrpc.php">' )
 	) {
