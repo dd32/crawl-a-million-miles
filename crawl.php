@@ -8,22 +8,27 @@ use React\EventLoop\Loop;
 use React\Http\Browser;
 use React\Socket\Connector;
 
-const FILE = './top-1m.csv';
+const FILE = './top10milliondomains.csv';
 
-const CONCURRENCY = 5;
+const CONCURRENCY = 75;
 const QUEUE_SIZE  = CONCURRENCY * 2;
-const TIMEOUT     = 5.0;
-const MAX_DOMAINS = 100; // Maximum number to process, set to 0 for all.
-const USER_AGENT  = 'dd32-CrawlaMillion/1.0; https://github.com/dd32/crawl-a-million-miles';
+const TIMEOUT     = 30.0;
+const MAX_DOMAINS = 1000; // Maximum number to process, set to 0 for all.
+const USER_AGENT  = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/102.0.0.0 Safari/537.36';
+
+const STAT_PRINT_TIME = 30.0; // How often to print the stats.
 
 $stats = [
 	'success' => 0,
 	'error'   => 0,
+	'code' => [],
+	'error-reasons' => [],
 	'wp'      => [
 		'yes'   => 0,
 		'maybe' => 0,
 		'no'    => 0,
-	]
+	],
+	'generator' => [],
 ];
 
 function stat( $stat, $sub = null ) {
@@ -52,6 +57,8 @@ function stat( $stat, $sub = null ) {
 function print_stats() {
 	global $stats;
 
+	ob_start();
+
 	echo "\n";
 
 	printf(
@@ -65,6 +72,16 @@ function print_stats() {
 	);
 
 	echo "\n";
+
+	asort( $stats['error-reason'] );
+	ksort( $stats['code'] );
+	asort( $stats['generator'] );
+
+	print_r( $stats );
+
+	$output = ob_get_flush();
+
+	file_put_contents( '/tmp/scanner/output/' . time() . '.txt', $output );
 
 }
 
@@ -83,6 +100,7 @@ function gen_domains() {
 
 	try {
 		while ( ( $line = fgetcsv( $f ) ) && ( ! MAX_DOMAINS || $domain++ < MAX_DOMAINS ) ) {
+			if ( 'Domain' === $line[1] ) continue;
 			yield $line[1];
 		}
 	} finally {
@@ -113,7 +131,7 @@ function callback_success( $domain, $response ) {
 		str_contains( $body, '/wp-' ) ||
 		str_contains( $body, '.w.org' ) ||
 		str_contains( $body, 'WordPress/' ) ||
-		str_contains( $body, '/xmlrpc.php">' )
+		str_contains( $body, '/xmlrpc.php' )
 	) {
 		stat( 'wp', 'yes' );
 	} elseif (
@@ -126,6 +144,15 @@ function callback_success( $domain, $response ) {
 		stat( 'wp', 'no' );
 	}
 
+	if ( preg_match( '/<meta[^>]+generator[^>]+>/i', $body, $m ) && preg_match( '/content=(["\'])([^"\']+)\\1/i', $m[0], $n ) ) {
+		// Strip versions..
+		$generator = preg_replace( '/^(.+?)\s*[0-9-].*$/', '$1', $n[2] );
+
+		stat( 'generator', strtolower( $generator ) );
+	} else {
+		stat( 'generator', 'none' );
+	}
+
 	echo "$domain returned HTTP " . $code . ' and ' . strlen( $response->getBody() ) . " bytes \n";
 }
 
@@ -136,13 +163,15 @@ function callback_failure( $domain, Exception $e ) {
 	stat('error');
 
 	$message = $e->getMessage();
-	$code    = '';
+
+	// (error code)
 	if ( preg_match( '!\(([^)]+)\)[^)]*$!', $message, $m ) ) {
-		$code = $m[1];
+		stat( 'error-reason', $m[1] );
 	}
 
-	if ( $code ) {
-		stat( 'error-reason', $code );
+	// HTTP Status error
+	if ( preg_match( '!HTTP status code (\d+)!i', $message, $m ) ) {
+		stat( 'code', $m[1] );
 	}
 
 	echo "$domain threw an error: " . $message . "\n";
@@ -181,7 +210,7 @@ $que = new Queue(
 );
 
 // Fill the Queue up every now and then.
-$filler_timer = Loop::addPeriodicTimer( 1.0, function( $timer ) use( $que ) {
+$filler_timer = Loop::addPeriodicTimer( 5.0, function( $timer ) use( $que ) {
 	// Setup the domains..
 	static $domains = false;
 	if ( ! $domains ) {
@@ -213,7 +242,7 @@ $filler_timer = Loop::addPeriodicTimer( 1.0, function( $timer ) use( $que ) {
 } );
 
 // Print out the status occasionally..
-Loop::addPeriodicTimer( 10.0, function( $timer ) use ( $que ) {
+Loop::addPeriodicTimer( STAT_PRINT_TIME, function( $timer ) use ( $que ) {
 	if ( ! $que->count() ) {
 		Loop::cancelTimer( $timer );
 	}
@@ -224,7 +253,7 @@ Loop::addPeriodicTimer( 10.0, function( $timer ) use ( $que ) {
 	echo "\e[0m\n";
 } );
 
-Loop::addSignal( SIGINT, function( int $signal ) use( $filler_timer, $que ) {
+Loop::addSignal( SIGINT, $signal_function = function( int $signal ) use( $filler_timer, $que ) {
 	if ( defined( '___KILLIT' ) ) {
 		print_stats();
 		exit( "\nCaught angry user interrupt signal.. killing..\n\n" );
@@ -235,7 +264,17 @@ Loop::addSignal( SIGINT, function( int $signal ) use( $filler_timer, $que ) {
 
 	define( '___KILLIT', true );
 } );
+Loop::addPeriodicTimer( 10.0, function( $timer ) use ( $signal_function, $que ) {
+	if ( $que->count() ) {
+		return;
+	}
+
+	echo "Removing Signal catcher..";
+	Loop::removeSignal( SIGINT, $signal_function );
+	Loop::cancelTimer( $timer );
+
+} );
 
 Loop::run();
 
-print_r( $stats );
+print_stats();
